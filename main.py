@@ -93,3 +93,5 @@ async def add_questions(ctx):
 
 
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)
+
+"hi"
