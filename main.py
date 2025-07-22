@@ -4,6 +4,8 @@ import logging
 from dotenv import load_dotenv
 import os
 import random
+import asyncio
+import re
 
 
 load_dotenv()
@@ -46,7 +48,7 @@ async def hot(ctx):
         # Read questions from file
     with open("questions.txt", "r") as file:
         content = file.read()
-        questions = [q.strip() for q in content.split(",") if q.strip()]
+        questions = [q.strip() for q in content.split("\n") if q.strip()]
 
     # Randomly pick 3 questions
     selected_questions = random.sample(questions, 3)
@@ -59,6 +61,35 @@ async def hot(ctx):
     formatted_questions = "\n".join(f"{i}. {q}" for i, q in enumerate(selected_questions, 1))
     print(formatted_questions)
     await ctx.send(formatted_questions)
+
+@bot.command()
+async def add_questions(ctx):
+    await ctx.send(f"Hey {ctx.author.mention}! \n" +
+                   "Write some of your questions in the format \"question1\", \"question2\", ...\"")
+        # Read questions from file
+    def check(m):
+        return m.author == ctx.author and m.channel == ctx.channel
+
+    try:
+        msg = await bot.wait_for("message", check=check)
+        message_text = msg.content
+        questions = re.findall(r'"(.*?)"', message_text)
+        questions[0] = questions[0].lstrip('"')
+        questions[-1] = questions[-1].rstrip('"')
+        with open("questions.txt", "a") as file:
+            for question in questions:
+                file.write(question + "\n")
+
+        
+
+        with open("questions.txt", "r") as file:
+            content = file.read()
+            all_questions = [q.strip() for q in content.split("\n") if q.strip()]
+            formatted_questions = "\n".join(f"{i}. {q}" for i, q in enumerate(all_questions, 1))
+            await ctx.send(formatted_questions)
+
+    except Exception as e:
+        await ctx.send(e)
 
 
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)
