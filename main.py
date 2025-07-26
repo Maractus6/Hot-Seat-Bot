@@ -65,7 +65,7 @@ async def hot(ctx):
 @bot.command()
 async def add_questions(ctx):
     await ctx.send(f"Hey {ctx.author.mention}! \n" +
-                   "Write some of your questions in the format \"question1\", \"question2\", ...\"")
+                   "Write some of your questions in the format \"question1\", \"question2\", ...\"questionN\"")
         # Read questions from file
     def check(m):
         return m.author == ctx.author and m.channel == ctx.channel
