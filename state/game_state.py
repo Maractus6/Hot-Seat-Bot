@@ -4,15 +4,15 @@ class GameState:
         self.current_round = 0
         self.current_player_index = 0
 
-        self.questions = []
+        self.question = None
         self.answer = None
-        self.fake_ansswers = {}
+        self.fake_answers = {}
         self.guesses = {}
     
     def start_round(self):
-        self.questions = []
+        self.question = None
         self.answer = None
-        self.fake_ansswers = {}
+        self.fake_answers = {}
         self.guesses = {}
 
     def get_current_player(self):
@@ -21,8 +21,8 @@ class GameState:
     def next_player(self):
         self.current_player_index = (self.current_player_index + 1) % len(self.players)
 
-    def set_questions(self, questions):
-        self.questions == questions
+    def set_question(self, question):
+        self.question = question
 
     def set_real_answers(self, answer):
         self.answer = answer
