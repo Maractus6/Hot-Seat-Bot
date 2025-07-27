@@ -128,22 +128,30 @@ class HotSeat(commands.Cog):
         answer = "\n".join(f"{i+1}. {value}" for i, value in enumerate(answers))
         fakes = await ctx.send(answer)
         number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-        for i in range(len(game_state.players)):
+        for i in range(len(game_state.fake_answers) + 1):
             print(i)
             await fakes.add_reaction(number_emojis[i])
         await ctx.send("Everyone vote for your answer!" \
-        "\n write \"continue\" to continue onwards")
+        "\nwrite \"continue\" to continue onwards")
 
         msg = await self.bot.wait_for("message", check=check)
         if msg.content.lower().strip() == "continue":
             vote_counts = {}
             vote_details = {}
+            fakes = await ctx.fetch_message(fakes.id)
+            # print(fakes.reactions)
+            print("test")
 
             for reaction in fakes.reactions:
                 emoji = str(reaction.emoji)
-                vote_counts[emoji] = reaction.count - (len(game_state.players) - 1)  # Subtract bot's own reaction
+                print("test2")
+                vote_counts[emoji] = reaction.count - 1  # Subtract bot's own reaction
 
-                users = await reaction.users().flatten()
+                users = []
+                async for user in reaction.users():
+                    if user != self.bot.user:
+                        users.append(user)
+                print("test3")
                 vote_details[emoji] = [user.name for user in users if user != self.bot.user]
 
             # Print results
