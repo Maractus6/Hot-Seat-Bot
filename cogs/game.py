@@ -48,130 +48,48 @@ class HotSeat(commands.Cog):
         
         game_state = GameState(players)
         self.games[ctx.guild.id] = game_state
-
-        # while True:  # One round per player
-        await self.play_round(ctx, game_state)
-        game_state.next_player()
+        print("Test While Loop")
+        play = True
+        while play:  # One round per player
+            play = await self.play_round(ctx, game_state)
+            game_state.next_player()
             # when end game flag is True stop the game
 
+        await ctx.send("Thanks for playing!")
+
+    
     
     async def play_round(self, ctx, game_state: GameState):
-        def check(m):
-                return m.author == current_player and m.channel == ctx.channel
-        def check_dm(m):
-                return isinstance(m.channel, discord.DMChannel)
-        
-        current_player = game_state.get_current_player()
+        print("Test Start Round")
         game_state.start_round()
+        print("Test Start Round After")
+        current_player = game_state.get_current_player()
+        print(current_player)
+        await ctx.send(f"**{current_player.display_name}** is selecting a question")
+        print("Test After sending message")
 
-        # Load questions
-        with open("data/questions.txt", "r") as file:
-            all_questions = [q.strip() for q in file if q.strip()]
-        
-        # Present 3 random questions
-        while True:
-            selected = random.sample(all_questions, 3)
-            formatted = "\n".join(f"{i+1}. {q}" for i, q in enumerate(selected))
-            formatted += f"\n\n{current_player.mention}, type a number to pick a question or 'n' to get new ones:"
-            await ctx.send(formatted)
+        questions = self.load_questions()
+        question = await self.select_question(ctx, game_state, questions)
+        if not question:
+            return False
 
-            try:
-                msg = await self.bot.wait_for("message", check=check)
-                if msg.content.lower().strip() == "n":
-                    continue
-                elif msg.content.strip().isdigit():
-                    choice = int(msg.content)
-                    if 1 <= choice <= 3:
-                        picked_question = selected[choice - 1]
-                        game_state.set_question(picked_question)
-                        await ctx.send(f"{current_player.mention} picked:\n**{picked_question}**")
-                        break
-            except asyncio.TimeoutError:
-                await ctx.send("Timed out waiting for a response.")
-                return
+        await ctx.send(f"{current_player.mention} picked:\n**{question}**")
 
-        # At this point, the question is selected — continue with answer/fakes/etc
-        # For example:
-        await ctx.send(f"{current_player.mention}, please DM me your real answer to this question.")
-        await current_player.send(f"{current_player.mention}, please DM me your real answer to this question.")
+        await self.collect_answers(ctx, game_state)
+        emoji_to_answer, message = await self.present_answers(ctx, game_state)
 
-        # try:
+        await ctx.send("Everyone vote for your answer!\nWrite `continue` to continue onwards.")
+        await self.wait_for_continue(ctx, game_state)
+
+        vote_details = await self.collect_votes(ctx, message, emoji_to_answer)
+        await self.award_points(game_state, emoji_to_answer, vote_details)
+        await self.display_results(ctx, game_state, emoji_to_answer, vote_details)
+
+        return await self.prompt_continue(ctx, game_state)
+
+
+
             
-        #     real_answer_msg = await self.bot.wait_for("message", check=check_dm, timeout=60)
-        #     game_state.answer = real_answer_msg.content
-        #     print("real answer recieved")
-        # except Exception as e:
-        #     await current_player.send(e)
-        #     return
-
-
-
-        for player in self.player_manager.get_players():
-            try:
-                if player == current_player:
-                    real_answer_msg = await self.bot.wait_for("message", check=check_dm, timeout=60)
-                    game_state.answer = real_answer_msg.content
-                    await ctx.send("real answer recieved")
-                else:
-                    await ctx.send(f" recieved")
-                    await player.send(f"Write a fake answer for:\n**{game_state.question}**")
-                    def check_fake(m):
-                        return m.author == player and isinstance(m.channel, discord.DMChannel)
-
-                    msg = await self.bot.wait_for("message", check=check_fake)
-                    game_state.fake_answers[player] = msg.content
-            except Exception as e:
-                await current_player.send(e)
-                return
-        answers = list(game_state.fake_answers.values()) 
-        answers.append(game_state.answer)
-        answer = "\n".join(f"{i+1}. {value}" for i, value in enumerate(answers))
-        fakes = await ctx.send(answer)
-        number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-        for i in range(len(game_state.fake_answers) + 1):
-            print(i)
-            await fakes.add_reaction(number_emojis[i])
-        await ctx.send("Everyone vote for your answer!" \
-        "\nwrite \"continue\" to continue onwards")
-
-        msg = await self.bot.wait_for("message", check=check)
-        if msg.content.lower().strip() == "continue":
-            vote_counts = {}
-            vote_details = {}
-            fakes = await ctx.fetch_message(fakes.id)
-            # print(fakes.reactions)
-            print("test")
-
-            for reaction in fakes.reactions:
-                emoji = str(reaction.emoji)
-                print("test2")
-                vote_counts[emoji] = reaction.count - 1  # Subtract bot's own reaction
-
-                users = []
-                async for user in reaction.users():
-                    if user != self.bot.user:
-                        users.append(user)
-                print("test3")
-                vote_details[emoji] = [user.name for user in users if user != self.bot.user]
-
-            # Print results
-            result = "📊 **Vote Tally:**\n"
-            for emoji, voters in vote_details.items():
-                result += f"{emoji} — {len(voters)} votes ({', '.join(voters)})\n"
-
-            await ctx.send(result)
-            
-
-
-
-
-
-
-
-
-
-
-
 
     @commands.command()
     async def add_questions(self, ctx):
@@ -192,6 +110,138 @@ class HotSeat(commands.Cog):
             await ctx.send(f"Success: added {len(questions)} questions.")
         except Exception as e:
             await ctx.send(f"Error: {e}")
+
+    def load_questions(self):
+        with open("data/questions.txt", "r") as file:
+            return [q.strip() for q in file if q.strip()]
+
+    async def select_question(self, ctx, game_state, questions):
+        current = game_state.get_current_player()
+        print(current)
+
+        while True:
+            selected = random.sample(questions, 3)
+            formatted = "\n".join(f"{i+1}. {q}" for i, q in enumerate(selected))
+            formatted += f"\n\n{current.mention}, type a number to pick a question or 'n' to get new ones:"
+            await current.send(formatted)
+
+            def check_dm(m):
+                return m.author == current and isinstance(m.channel, discord.DMChannel)
+
+            try:
+                msg = await self.bot.wait_for("message", check=check_dm, timeout=60)
+                if msg.content.lower().strip() == "n":
+                    continue
+                elif msg.content.isdigit() and 1 <= int(msg.content) <= 3:
+                    question = selected[int(msg.content) - 1]
+                    game_state.set_question(question)
+                    return question
+            except asyncio.TimeoutError:
+                await ctx.send("Timed out waiting for a response.")
+                return None
+
+    async def collect_answers(self, ctx, game_state):
+        current = game_state.get_current_player()
+        await current.send(f"{current.mention}, please DM me your real answer to the question:\n**{game_state.question}**")
+
+        def check_dm(m): return m.author == current and isinstance(m.channel, discord.DMChannel)
+
+        real_msg = await self.bot.wait_for("message", check=check_dm, timeout=60)
+        game_state.answer = real_msg.content
+        await ctx.send("Real answer received")
+
+        for player in self.player_manager.get_players():
+            if player == current:
+                continue
+            await player.send(f"Write a fake answer for:\n**{game_state.question}**")
+
+            def check_fake(m): return m.author == player and isinstance(m.channel, discord.DMChannel)
+
+            fake_msg = await self.bot.wait_for("message", check=check_fake, timeout=60)
+            game_state.fake_answers[player] = fake_msg.content
+            await ctx.send(f"Received answer from **{player.display_name}**")
+
+
+    async def present_answers(self, ctx, game_state):
+        all_answers = list(game_state.fake_answers.values()) + [game_state.answer]
+        random.shuffle(all_answers)
+
+        number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+        emoji_to_answer = {number_emojis[i]: all_answers[i] for i in range(len(all_answers))}
+
+        text = "\n".join(f"{i+1}. {ans}" for i, ans in enumerate(all_answers))
+        message = await ctx.send(text)
+
+        for i in range(len(all_answers)):
+            await message.add_reaction(number_emojis[i])
+
+        return emoji_to_answer, message
+
+
+    async def wait_for_continue(self, ctx, game_state):
+        def check(m): return m.author == game_state.get_current_player() and m.channel == ctx.channel
+        try:
+            await self.bot.wait_for("message", check=check, timeout=60)
+        except asyncio.TimeoutError:
+            await ctx.send("Timed out waiting for continue. Ending round.")
+
+
+    async def collect_votes(self, ctx, message, emoji_to_answer):
+        vote_details = {}
+        message = await ctx.fetch_message(message.id)
+
+        for reaction in message.reactions:
+            emoji = str(reaction.emoji)
+            if emoji not in emoji_to_answer:
+                continue
+
+            voters = []
+            async for user in reaction.users():
+                if not user.bot:
+                    voters.append(user)
+
+            vote_details[emoji] = voters
+
+        return vote_details
+
+
+    async def award_points(self, game_state, emoji_to_answer, vote_details):
+        answer_authors = {v: k for k, v in game_state.fake_answers.items()}
+        answer_authors[game_state.answer] = game_state.get_current_player()
+
+        for emoji, voters in vote_details.items():
+            answer_text = emoji_to_answer[emoji]
+            author = answer_authors.get(answer_text)
+
+            for voter in voters:
+                if author and voter != author:
+                    game_state.scores[author] += 1
+
+
+    async def display_results(self, ctx, game_state, emoji_to_answer, vote_details):
+        result = "📊 **Vote Tally:**\n"
+        for emoji, voters in vote_details.items():
+            text = emoji_to_answer[emoji]
+            names = ", ".join(voter.display_name for voter in voters)
+            result += f"{emoji} ({text}) — {len(voters)} vote(s): {names}\n"
+
+        scoreboard = "\n🏅 **Current Scores:**\n"
+        for player, score in sorted(game_state.scores.items(), key=lambda x: -x[1]):
+            scoreboard += f"{player.display_name}: {score} points\n"
+
+        await ctx.send(result + scoreboard)
+
+    async def prompt_continue(self, ctx, game_state):
+        await ctx.send("Round Finished. Play Another Round? (y/n)")
+
+        def check(m): return m.author == game_state.get_current_player() and m.channel == ctx.channel
+
+        try:
+            msg = await self.bot.wait_for("message", check=check, timeout=30)
+            print(msg)
+            return msg.content.lower().strip() == "y"
+        except asyncio.TimeoutError:
+            return False
 
 async def setup(bot):
     await bot.add_cog(HotSeat(bot))
