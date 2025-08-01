@@ -1,132 +1,129 @@
-import random 
-import asyncio
+from discord.ext import commands, menus
+from discord.ext.menus.views import ViewMenuPages
+import discord
+import math
 
-def load_questions(self):
-    with open("data/questions.txt", "r") as file:
-        return [q.strip() for q in file if q.strip()]
+# python -m pip install -U git+https://github.com/Rapptz/discord-ext-menus
 
-async def select_question(self, ctx, game_state, questions):
-    current = game_state.current_player
+REMOVE_BUTTONS = [
+    "\N{BLACK LEFT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR}\ufe0f",
+    "\N{BLACK RIGHT-POINTING DOUBLE TRIANGLE WITH VERTICAL BAR}\ufe0f",
+    "\N{BLACK SQUARE FOR STOP}\ufe0f",]
 
-    while True:
-        selected = random.sample(questions, 3)
-        formatted = "\n".join(f"{i+1}. {q}" for i, q in enumerate(selected))
-        formatted += f"\n\n{current.mention}, type a number to pick a question or 'n' to get new ones:"
-        await current.send(formatted)
 
-        def check_dm(m):
-            return m.author == current and isinstance(m.channel, discord.DMChannel)
+class FunctionPageSource(menus.PageSource):
+    def __init__(self, num_pages, format_page):
+        self.num_pages = num_pages
+        self.format_page = format_page.__get__(self)
 
-        try:
-            msg = await self.bot.wait_for("message", check=check_dm, timeout=60)
-            if msg.content.lower().strip() == "n":
-                continue
-            elif msg.content.isdigit() and 1 <= int(msg.content) <= 3:
-                question = selected[int(msg.content) - 1]
-                game_state.set_question(question)
-                return question
-        except asyncio.TimeoutError:
-            await ctx.send("Timed out waiting for a response.")
+    def is_paginating(self):
+        return self.num_pages > 1
+
+    async def get_page(self, page_number):
+        return page_number
+
+    def get_max_pages(self):
+        return self.num_pages
+
+
+class AsyncListPageSource(menus.PageSource):
+    def __init__(
+        self,
+        data,
+        title=None,
+        show_index=False,
+        prepare_page=lambda self, items: None,
+        format_item=str,
+        per_page=20,
+        count=None,
+    ):
+        super().__init__(data, per_page=per_page)
+        self.title = title
+        self.show_index = show_index
+        self.prepare_page = prepare_page.__get__(self)
+        self.format_item = format_item.__get__(self)
+        self.count = count
+
+    def get_max_pages(self):
+        if self.count is None:
             return None
+        else:
+            return math.ceil(self.count / self.per_page)
 
-async def collect_answers(self, ctx, game_state):
-    current = game_state.current_player
-    await current.send(f"{current.mention}, please DM me your real answer to the question:\n**{game_state.question}**")
+    async def format_page(self, menu, entries):
+        self.prepare_page(entries)
+        lines = [
+            f"{i+1}. {self.format_item(x)}" if self.show_index else self.format_item(x)
+            for i, x in enumerate(entries, start=menu.current_page * self.per_page)
+        ]
+        start = menu.current_page * self.per_page
 
-    def check_dm(m): return m.author == current and isinstance(m.channel, discord.DMChannel)
+        footer = menu.ctx._(
+            "pagination-showing-entries-count" if self.count is not None else "pagination-showing-entries",
+            start=start + 1,
+            end=start + len(lines),
+            total=self.count,
+        )
+        embed = menu.ctx.bot.Embed(
+            title=self.title,
+            description=f"\n".join(lines)[:4096],
+        )
+        embed.set_footer(text=footer)
+        return embed
+class ContinuablePages(ViewMenuPages):
+    def __init__(self, source, allow_last=True, allow_go=True, **kwargs):
+        super().__init__(source, **kwargs, timeout=120)
+        self.allow_last = allow_last
+        self.allow_go = allow_go
+        for x in REMOVE_BUTTONS:
+            self.remove_button(x)
 
-    real_msg = await self.bot.wait_for("message", check=check_dm, timeout=60)
-    game_state.answer = real_msg.content
-    await ctx.send("Real answer received")
+    async def send_initial_message(self, ctx, channel):
+        page = await self._source.get_page(self.current_page)
+        kwargs = await self._get_kwargs_from_page(page)
+        return await self.send_with_view(channel, **kwargs)
 
-    for player in self.player_manager.get_players():
-        if player == current:
-            continue
-        await player.send(f"Write a fake answer for:\n**{game_state.question}**")
+    async def show_checked_page(self, page_number):
+        max_pages = self._source.get_max_pages()
+        try:
+            if max_pages is None:
+                await self.show_page(page_number)
+            elif page_number < 0 and not self.allow_last:
+                await self.ctx.send(ctx._("pagination-last-jumping-unsupported"))
+            else:
+                await self.show_page(page_number % max_pages)
+        except IndexError:
+            pass
 
-        def check_fake(m): return m.author == player and isinstance(m.channel, discord.DMChannel)
+    async def continue_at(self, ctx, page, *, channel=None, wait=False):
+        self.stop()
+        max_pages = self._source.get_max_pages()
+        if max_pages is None:
+            self.current_page = page
+        else:
+            self.current_page = page % self._source.get_max_pages()
+        self.message = None
+        await self.start(ctx, channel=channel, wait=wait)
+class QuestionMenuSource(menus.ListPageSource):
+    def __init__(self, questions, per_page=25):
+        super().__init__(questions, per_page=per_page)
 
-        fake_msg = await self.bot.wait_for("message", check=check_fake, timeout=60)
-        game_state.fake_answers[player] = fake_msg.content
-        await ctx.send(f"Received answer from **{player.display_name}**")
+        # Set custom attributes here
+        self.title = "Questions"
+        self.show_index = True
+        self.format_item = lambda item: item 
 
+    async def format_page(self, menu, entries):
+        print("Formatting page...")
 
-async def present_answers(self, ctx, game_state):
-    all_answers = list(game_state.fake_answers.values()) + [game_state.answer]
-    random.shuffle(all_answers)
-
-    number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-    emoji_to_answer = {number_emojis[i]: all_answers[i] for i in range(len(all_answers))}
-
-    text = "\n".join(f"{i+1}. {ans}" for i, ans in enumerate(all_answers))
-    message = await ctx.send(text)
-
-    for i in range(len(all_answers)):
-        await message.add_reaction(number_emojis[i])
-
-    return emoji_to_answer, message
-
-
-async def wait_for_continue(self, ctx, game_state):
-    def check(m): return m.author == game_state.current_player and m.channel == ctx.channel
-    try:
-        await self.bot.wait_for("message", check=check, timeout=60)
-    except asyncio.TimeoutError:
-        await ctx.send("Timed out waiting for continue. Ending round.")
-
-
-async def collect_votes(self, ctx, message, emoji_to_answer):
-    vote_details = {}
-    message = await ctx.fetch_message(message.id)
-
-    for reaction in message.reactions:
-        emoji = str(reaction.emoji)
-        if emoji not in emoji_to_answer:
-            continue
-
-        voters = []
-        async for user in reaction.users():
-            if not user.bot:
-                voters.append(user)
-
-        vote_details[emoji] = voters
-
-    return vote_details
-
-
-async def award_points(self, game_state, emoji_to_answer, vote_details):
-    answer_authors = {v: k for k, v in game_state.fake_answers.items()}
-    answer_authors[game_state.answer] = game_state.current_player
-
-    for emoji, voters in vote_details.items():
-        answer_text = emoji_to_answer[emoji]
-        author = answer_authors.get(answer_text)
-
-        for voter in voters:
-            if author and voter != author:
-                game_state.scores[author] += 1
-
-
-async def display_results(self, ctx, game_state, emoji_to_answer, vote_details):
-    result = "📊 **Vote Tally:**\n"
-    for emoji, voters in vote_details.items():
-        text = emoji_to_answer[emoji]
-        names = ", ".join(voter.display_name for voter in voters)
-        result += f"{emoji} ({text}) — {len(voters)} vote(s): {names}\n"
-
-    scoreboard = "\n🏅 **Current Scores:**\n"
-    for player, score in sorted(game_state.scores.items(), key=lambda x: -x[1]):
-        scoreboard += f"{player.display_name}: {score} points\n"
-
-    await ctx.send(result + scoreboard)
-
-async def prompt_continue(self, ctx, game_state):
-    await ctx.send("Round Finished. Play Another Round? (y/n)")
-
-    def check(m): return m.author == game_state.current_player and m.channel == ctx.channel
-
-    try:
-        msg = await self.bot.wait_for("message", check=check, timeout=30)
-        return msg.content.lower().strip() == "y"
-    except asyncio.TimeoutError:
-        return False
+        lines = [
+            f"{i+1}. {self.format_item(entry)}"
+            for i, entry in enumerate(entries, start=menu.current_page * self.per_page)
+        ]
+        embed = discord.Embed(
+            title=self.title,
+            description="\n".join(lines)[:4096],
+            color=discord.Color.blue(),
+        )
+        embed.set_footer(text=f"Page {menu.current_page + 1}/{self.get_max_pages()}")
+        return embed
