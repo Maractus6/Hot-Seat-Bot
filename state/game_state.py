@@ -8,6 +8,7 @@ class GameState:
         self.answer = None
         self.fake_answers = {}
         self.guesses = {}
+        self.scores = {player: 0 for player in players}
     
     def start_round(self):
         self.question = None
